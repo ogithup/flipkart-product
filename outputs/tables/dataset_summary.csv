@@ -1,0 +1,8 @@
+Metric,Value
+Total raw records,20000
+Records after cleaning,19998
+Unique products (pid),19998
+Unique brands,3500
+Unique root categories,265
+Missing brand values,5864
+Missing description values,2
