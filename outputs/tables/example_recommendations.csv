@@ -1,6 +1,6 @@
-product_name,brand,root_category,leaf_category,discounted_price,similarity_score
-Absurd Full Sleeve Solid Men's Reversible Sweatshirt,unknown,clothing,sweatshirts,1650.0,0.3889092163692786
-Fila Full Sleeve Solid Men's Reversible Sweatshirt,unknown,clothing,sweatshirts,1279.0,0.3861681961112325
-Ashdan Sleeveless Solid Men's Sweatshirt,Ashdan,clothing,sleeveless solid men sweatshirt,719.0,0.3816322270929157
-Cayman Full Sleeve Solid Men's Sweatshirt,unknown,clothing,sweatshirts,1075.0,0.37455170426279
-Mudo Full Sleeve Solid Men's Sweatshirt,unknown,clothing,sweatshirts,1299.0,0.36364383286332225
+product_name,brand,root_category,leaf_category,discounted_price,cosine_score,hybrid_score,similarity_score,is_strong_match
+Fila Full Sleeve Solid Men's Reversible Sweatshirt,unknown,clothing,sweatshirts,1279.0,0.8761163139501512,0.8006697883700907,0.8006697883700907,True
+Absurd Full Sleeve Solid Men's Reversible Sweatshirt,unknown,clothing,sweatshirts,1650.0,0.837892227016616,0.7777353362099696,0.7777353362099696,True
+Peter England Sleeveless Solid Men's Sweatshirt,unknown,clothing,sweatshirts,909.0,0.8166108004716732,0.764966480283004,0.764966480283004,True
+Rodid Full Sleeve Solid Men's Sweatshirt,unknown,clothing,sweatshirts,399.0,0.8602100863141273,0.7598760517884764,0.7598760517884764,True
+Rodid Full Sleeve Solid Men's Sweatshirt,unknown,clothing,sweatshirts,549.0,0.8602100863141273,0.7598760517884764,0.7598760517884764,True
