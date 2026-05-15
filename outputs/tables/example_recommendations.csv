@@ -1,6 +1,6 @@
 product_name,brand,root_category,leaf_category,discounted_price,cosine_score,hybrid_score,similarity_score,is_strong_match
-Fila Full Sleeve Solid Men's Reversible Sweatshirt,unknown,clothing,sweatshirts,1279.0,0.8761163139501512,0.8006697883700907,0.8006697883700907,True
-Absurd Full Sleeve Solid Men's Reversible Sweatshirt,unknown,clothing,sweatshirts,1650.0,0.837892227016616,0.7777353362099696,0.7777353362099696,True
-Peter England Sleeveless Solid Men's Sweatshirt,unknown,clothing,sweatshirts,909.0,0.8166108004716732,0.764966480283004,0.764966480283004,True
-Rodid Full Sleeve Solid Men's Sweatshirt,unknown,clothing,sweatshirts,399.0,0.8602100863141273,0.7598760517884764,0.7598760517884764,True
-Rodid Full Sleeve Solid Men's Sweatshirt,unknown,clothing,sweatshirts,549.0,0.8602100863141273,0.7598760517884764,0.7598760517884764,True
+Peter England Sleeveless Solid Men's Sweatshirt,unknown,clothing,sweatshirts,909.0,0.5943314979228979,0.8956598898753738,0.8956598898753738,True
+Fila Full Sleeve Solid Men's Reversible Sweatshirt,unknown,clothing,sweatshirts,1279.0,0.5379563742066391,0.8379883354333577,0.8379883354333577,True
+Absurd Full Sleeve Solid Men's Reversible Sweatshirt,unknown,clothing,sweatshirts,1650.0,0.4904207863576842,0.8339953460540455,0.8339953460540455,True
+RGT Full Sleeve Solid Men's Sweatshirt,unknown,clothing,sweatshirts,1199.0,0.48500926968335334,0.8265407786534017,0.8265407786534017,True
+Jogur Full Sleeve Solid Men's Sweatshirt,unknown,clothing,sweatshirts,1199.0,0.4701831420844962,0.8252953839350977,0.8252953839350977,True

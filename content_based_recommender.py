@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -63,6 +63,60 @@ def parse_specifications(raw_value: str) -> str:
     return normalize_text(text)
 
 
+def extract_description_core(raw_value: str) -> str:
+    if pd.isna(raw_value):
+        return ""
+
+    useful_keywords = {
+        "material",
+        "fabric",
+        "fit",
+        "occasion",
+        "size",
+        "sleeve",
+        "pattern",
+        "color",
+        "shade",
+        "pack",
+        "compatible",
+        "designed",
+        "model",
+        "neck",
+        "ideal",
+        "width",
+        "height",
+        "length",
+        "depth",
+    }
+    noise_phrases = [
+        "best quality",
+        "shop online",
+        "free shipping",
+        "cash on delivery",
+        "only genuine products",
+        "buy ",
+        "online in india",
+        "huge collection",
+    ]
+
+    text = str(raw_value).replace("\n", " ")
+    sentence_candidates = re.split(r"[.!?;]+", text)
+    kept_sentences: List[str] = []
+
+    for sentence in sentence_candidates:
+        lowered = sentence.lower()
+        if any(phrase in lowered for phrase in noise_phrases):
+            continue
+        normalized = normalize_text(sentence)
+        if not normalized:
+            continue
+        tokens = set(normalized.split())
+        if useful_keywords & tokens:
+            kept_sentences.append(normalized)
+
+    return " ".join(kept_sentences).strip()
+
+
 def extract_spec_pairs(raw_value: str) -> Dict[str, str]:
     if pd.isna(raw_value):
         return {}
@@ -74,6 +128,151 @@ def extract_spec_pairs(raw_value: str) -> Dict[str, str]:
         if key and value:
             spec_pairs[key] = value
     return spec_pairs
+
+
+def normalize_spec_value(field: str, value: str, category_group: str) -> str:
+    normalized = normalize_text(value)
+    if not normalized:
+        return ""
+
+    if category_group != "clothing":
+        return normalized
+
+    if field == "ideal for":
+        if any(token in normalized for token in ["men", "man", "boys", "boy"]):
+            return "men"
+        if any(token in normalized for token in ["women", "woman", "girls", "girl", "ladies", "lady"]):
+            return "women"
+        if "unisex" in normalized:
+            return "unisex"
+    elif field == "sleeve":
+        if "sleeveless" in normalized:
+            return "sleeveless"
+        if any(phrase in normalized for phrase in ["full sleeve", "long sleeve"]):
+            return "full sleeve"
+        if any(phrase in normalized for phrase in ["half sleeve", "short sleeve"]):
+            return "short sleeve"
+        if "three quarter" in normalized or "3 4 sleeve" in normalized or "3 4th sleeve" in normalized:
+            return "three quarter sleeve"
+    elif field in {"fabric", "material"}:
+        material_tokens = [
+            "cotton",
+            "polyester",
+            "denim",
+            "wool",
+            "silk",
+            "linen",
+            "rayon",
+            "viscose",
+            "nylon",
+            "leather",
+            "fleece",
+        ]
+        matches = [token for token in material_tokens if token in normalized]
+        if matches:
+            return " ".join(matches[:2])
+    elif field == "pattern":
+        for pattern in ["solid", "printed", "striped", "checkered", "graphic", "plain"]:
+            if pattern in normalized:
+                return pattern
+    elif field == "type":
+        type_patterns = [
+            "sweatshirt",
+            "t shirt",
+            "shirt",
+            "top",
+            "kurta",
+            "jacket",
+            "hoodie",
+            "jeans",
+            "trousers",
+            "leggings",
+            "dress",
+            "skirt",
+        ]
+        for pattern in type_patterns:
+            if pattern in normalized:
+                return pattern.replace(" ", "_")
+
+    return normalized
+
+
+def extract_name_attributes(product_name: str, root_category: str) -> Dict[str, str]:
+    text = normalize_text(product_name)
+    tokens = set(text.split())
+    category_group = root_category_group(root_category)
+    extracted: Dict[str, str] = {}
+
+    if category_group == "clothing":
+        if "sweatshirt" in tokens:
+            extracted["type"] = "sweatshirt"
+        elif "hoodie" in tokens:
+            extracted["type"] = "hoodie"
+        elif "shirt" in tokens:
+            extracted["type"] = "shirt"
+        elif "top" in tokens:
+            extracted["type"] = "top"
+        elif "kurta" in tokens:
+            extracted["type"] = "kurta"
+        elif "jacket" in tokens:
+            extracted["type"] = "jacket"
+
+        if any(token in tokens for token in ["men", "man", "boys", "boy"]):
+            extracted["ideal for"] = "men"
+        elif any(token in tokens for token in ["women", "woman", "girls", "girl", "ladies"]):
+            extracted["ideal for"] = "women"
+
+        if "sleeveless" in text:
+            extracted["sleeve"] = "sleeveless"
+        elif "full sleeve" in text or "long sleeve" in text:
+            extracted["sleeve"] = "full sleeve"
+        elif "half sleeve" in text or "short sleeve" in text:
+            extracted["sleeve"] = "short sleeve"
+        elif "three quarter" in text:
+            extracted["sleeve"] = "three quarter sleeve"
+
+        for pattern in ["solid", "printed", "striped", "checkered", "graphic", "plain"]:
+            if pattern in tokens:
+                extracted["pattern"] = pattern
+                break
+
+        for material in ["cotton", "polyester", "denim", "wool", "silk", "linen", "rayon", "fleece"]:
+            if material in tokens:
+                extracted["fabric"] = material
+                extracted["material"] = material
+                break
+    elif category_group == "mobile_accessories":
+        if "case" in tokens or "cover" in tokens:
+            extracted["type"] = "case"
+        elif "screen" in tokens and "guard" in tokens:
+            extracted["type"] = "screen_guard"
+
+        model_match = re.search(
+            r"\b(iphone|ipad|samsung|galaxy|nokia|sony|micromax|motorola|lenovo|htc|asus|xiaomi)\s+[a-z0-9+\-]+",
+            text,
+        )
+        if model_match:
+            extracted["designed for"] = model_match.group(0)
+            extracted["compatible model"] = model_match.group(0)
+
+    return extracted
+
+
+def enrich_spec_pairs(spec_pairs: Dict[str, str], product_name: str, root_category: str) -> Dict[str, str]:
+    category_group = root_category_group(root_category)
+    normalized_specs: Dict[str, str] = {}
+    for key, value in spec_pairs.items():
+        normalized_value = normalize_spec_value(key, value, category_group)
+        if normalized_value:
+            normalized_specs[key] = normalized_value
+    name_attributes = extract_name_attributes(product_name, root_category)
+
+    for key, value in name_attributes.items():
+        normalized_value = normalize_spec_value(key, value, category_group)
+        if normalized_value and not normalized_specs.get(key):
+            normalized_specs[key] = normalized_value
+
+    return normalized_specs
 
 
 def brand_tokens(brand: str) -> Set[str]:
@@ -317,17 +516,119 @@ def build_core_attribute_text(root_category: str, spec_pairs: Dict[str, str]) ->
     return " ".join(attribute_chunks).strip()
 
 
+def build_priority_attribute_text(root_category: str, spec_pairs: Dict[str, str]) -> str:
+    category_group = root_category_group(root_category)
+
+    if category_group == "clothing":
+        fields = ["type", "ideal for", "sleeve", "fabric", "material", "pattern"]
+    elif category_group == "jewellery":
+        fields = ["type", "base material", "material", "gemstone", "ring size"]
+    elif category_group == "mobile_accessories":
+        fields = ["designed for", "compatible model", "model name", "type"]
+    elif category_group == "furniture_home":
+        fields = ["type", "material", "primary material", "width", "height", "length", "depth"]
+    else:
+        fields = ["type", "model name", "model number", "designed for"]
+
+    chunks: List[str] = []
+    for field in fields:
+        value = spec_pairs.get(field, "")
+        if value:
+            chunks.append(f"{field} {value}")
+    return " ".join(chunks).strip()
+
+
+def has_hard_mismatch(item_row: pd.Series, candidate_row: pd.Series) -> bool:
+    item_specs = item_row["spec_pairs"]
+    candidate_specs = candidate_row["spec_pairs"]
+    category_group = root_category_group(item_row["root_category"])
+
+    def mismatch(keys: List[str]) -> bool:
+        item_value = first_spec_value(item_specs, keys)
+        candidate_value = first_spec_value(candidate_specs, keys)
+        return bool(item_value and candidate_value and item_value != candidate_value)
+
+    if mismatch(["type"]):
+        return True
+
+    if category_group == "clothing":
+        if mismatch(["ideal for"]):
+            return True
+        if mismatch(["sleeve"]):
+            return True
+        item_material = first_spec_value(item_specs, ["fabric", "material"])
+        candidate_material = first_spec_value(candidate_specs, ["fabric", "material"])
+        if item_material and candidate_material and item_material != candidate_material:
+            return True
+
+    if category_group == "mobile_accessories" and mismatch(["designed for", "compatible model", "model name"]):
+        return True
+
+    return False
+
+
 def select_candidate_indices(
     item_row: pd.Series,
     train_df: pd.DataFrame,
     min_candidates: int = MIN_CANDIDATE_POOL,
 ) -> np.ndarray:
     family_mask = (train_df["family_key"] == item_row["family_key"]) & (train_df["pid"] != item_row["pid"])
+
+    if root_category_group(item_row["root_category"]) == "clothing":
+        item_specs = item_row["spec_pairs"]
+        required_type = first_spec_value(item_specs, ["type"])
+        required_ideal_for = first_spec_value(item_specs, ["ideal for"])
+        required_sleeve = first_spec_value(item_specs, ["sleeve"])
+        required_fabric = first_spec_value(item_specs, ["fabric", "material"])
+        if required_type:
+            family_mask = family_mask & (
+                train_df["spec_pairs"].apply(lambda specs: first_spec_value(specs, ["type"]) == required_type)
+            )
+        if required_ideal_for:
+            family_mask = family_mask & (
+                train_df["spec_pairs"].apply(lambda specs: first_spec_value(specs, ["ideal for"]) == required_ideal_for)
+            )
+        if required_sleeve:
+            family_mask = family_mask & (
+                train_df["spec_pairs"].apply(lambda specs: first_spec_value(specs, ["sleeve"]) == required_sleeve)
+            )
+        elif required_fabric:
+            family_mask = family_mask & (
+                train_df["spec_pairs"].apply(
+                    lambda specs: first_spec_value(specs, ["fabric", "material"]) == required_fabric
+                )
+            )
+
     family_indices = train_df.index[family_mask].to_numpy()
     if len(family_indices) >= TOP_K:
         return family_indices
 
     core_group_mask = (train_df["core_group_key"] == item_row["core_group_key"]) & (train_df["pid"] != item_row["pid"])
+    if root_category_group(item_row["root_category"]) == "clothing":
+        item_specs = item_row["spec_pairs"]
+        required_type = first_spec_value(item_specs, ["type"])
+        required_ideal_for = first_spec_value(item_specs, ["ideal for"])
+        required_sleeve = first_spec_value(item_specs, ["sleeve"])
+        required_fabric = first_spec_value(item_specs, ["fabric", "material"])
+        if required_type:
+            core_group_mask = core_group_mask & (
+                train_df["spec_pairs"].apply(lambda specs: first_spec_value(specs, ["type"]) == required_type)
+            )
+        if required_ideal_for:
+            core_group_mask = core_group_mask & (
+                train_df["spec_pairs"].apply(lambda specs: first_spec_value(specs, ["ideal for"]) == required_ideal_for)
+            )
+        if required_sleeve:
+            core_group_mask = core_group_mask & (
+                train_df["spec_pairs"].apply(lambda specs: first_spec_value(specs, ["sleeve"]) == required_sleeve)
+            )
+        elif required_fabric:
+            core_group_mask = core_group_mask & (
+                train_df["spec_pairs"].apply(
+                    lambda specs: first_spec_value(specs, ["fabric", "material"]) == required_fabric
+                )
+            )
+
     core_group_indices = train_df.index[core_group_mask].to_numpy()
     if len(core_group_indices) >= TOP_K:
         return core_group_indices
@@ -348,67 +649,87 @@ def select_candidate_indices(
 def attribute_match_score(item_row: pd.Series, candidate_row: pd.Series) -> float:
     category_group = root_category_group(item_row["root_category"])
     if category_group == "clothing":
-        spec_keys = ["type", "ideal for", "sleeve", "pattern", "fabric", "material", "size", "color", "shade"]
+        spec_weights = {
+            "type": 1.5,
+            "ideal for": 1.5,
+            "sleeve": 1.2,
+            "pattern": 1.0,
+            "fabric": 1.2,
+            "material": 1.2,
+            "size": 0.8,
+            "color": 0.8,
+            "shade": 0.8,
+        }
     elif category_group == "jewellery":
-        spec_keys = [
-            "type",
-            "base material",
-            "material",
-            "gemstone",
-            "semi precious stone type",
-            "ring size",
-            "size",
-            "color",
-            "shade",
-        ]
+        spec_weights = {
+            "type": 1.5,
+            "base material": 1.2,
+            "material": 1.2,
+            "gemstone": 1.2,
+            "semi precious stone type": 1.0,
+            "ring size": 1.0,
+            "size": 0.8,
+            "color": 0.8,
+            "shade": 0.8,
+        }
     elif category_group == "mobile_accessories":
-        spec_keys = [
-            "designed for",
-            "compatible model",
-            "model name",
-            "model number",
-            "model id",
-            "type",
-            "color",
-            "shade",
-        ]
+        spec_weights = {
+            "designed for": 1.5,
+            "compatible model": 1.5,
+            "model name": 1.2,
+            "model number": 1.0,
+            "model id": 1.0,
+            "type": 1.2,
+            "color": 0.8,
+            "shade": 0.8,
+        }
     elif category_group == "furniture_home":
-        spec_keys = ["type", "material", "primary material", "width", "height", "length", "depth", "color", "shade"]
+        spec_weights = {
+            "type": 1.5,
+            "material": 1.2,
+            "primary material": 1.2,
+            "width": 1.0,
+            "height": 1.0,
+            "length": 1.0,
+            "depth": 1.0,
+            "color": 0.8,
+            "shade": 0.8,
+        }
     else:
-        spec_keys = [
-            "type",
-            "model name",
-            "model number",
-            "model id",
-            "size",
-            "color",
-            "shade",
-        ]
+        spec_weights = {
+            "type": 1.5,
+            "model name": 1.2,
+            "model number": 1.0,
+            "model id": 1.0,
+            "size": 0.8,
+            "color": 0.8,
+            "shade": 0.8,
+        }
 
     item_specs = item_row["spec_pairs"]
     candidate_specs = candidate_row["spec_pairs"]
-    compared = 0
+    compared_weight = 0.0
     matched = 0.0
 
-    for key in spec_keys:
+    for key, weight in spec_weights.items():
         item_value = item_specs.get(key, "")
         candidate_value = candidate_specs.get(key, "")
         if not item_value or not candidate_value:
             continue
-        compared += 1
+        compared_weight += weight
         if item_value == candidate_value:
-            matched += 1.0
+            matched += weight
         elif item_value in candidate_value or candidate_value in item_value:
-            matched += 0.5
+            matched += 0.5 * weight
 
-    spec_score = (matched / compared) if compared else 0.0
+    spec_score = (matched / compared_weight) if compared_weight else 0.0
 
     item_name_tokens = set(item_row["clean_name"].split())
     candidate_name_tokens = set(candidate_row["clean_name"].split())
     name_union = item_name_tokens | candidate_name_tokens
     name_overlap = (len(item_name_tokens & candidate_name_tokens) / len(name_union)) if name_union else 0.0
 
-    if compared == 0:
+    if compared_weight == 0:
         return name_overlap
     return (0.8 * spec_score) + (0.2 * name_overlap)
 
@@ -417,18 +738,93 @@ def category_match_score(item_row: pd.Series, candidate_row: pd.Series) -> float
     if item_row["family_key"] == candidate_row["family_key"]:
         return 1.0
     if item_row["core_group_key"] == candidate_row["core_group_key"]:
-        return 0.85
+        return 0.9
     if item_row["leaf_category"] == candidate_row["leaf_category"]:
-        return 0.7
+        return 0.75
     if item_row["root_category"] == candidate_row["root_category"]:
         return 0.4
     return 0.0
 
 
+def description_overlap_score(item_row: pd.Series, candidate_row: pd.Series) -> float:
+    item_tokens = set(item_row["clean_description_core"].split())
+    candidate_tokens = set(candidate_row["clean_description_core"].split())
+    if not item_tokens or not candidate_tokens:
+        return 0.0
+
+    overlap = len(item_tokens & candidate_tokens)
+    union = len(item_tokens | candidate_tokens)
+    if union == 0:
+        return 0.0
+    return overlap / union
+
+
+def exact_match_boost_score(item_row: pd.Series, candidate_row: pd.Series) -> float:
+    item_specs = item_row["spec_pairs"]
+    candidate_specs = candidate_row["spec_pairs"]
+    category_group = root_category_group(item_row["root_category"])
+
+    boost = 0.0
+
+    if item_row["family_key"] == candidate_row["family_key"]:
+        boost += 0.12
+    elif item_row["core_group_key"] == candidate_row["core_group_key"]:
+        boost += 0.08
+
+    def exact(keys: List[str]) -> bool:
+        item_value = first_spec_value(item_specs, keys)
+        candidate_value = first_spec_value(candidate_specs, keys)
+        return bool(item_value and candidate_value and item_value == candidate_value)
+
+    if exact(["type"]):
+        boost += 0.18
+
+    if category_group == "clothing":
+        if exact(["ideal for"]):
+            boost += 0.18
+        if exact(["sleeve"]):
+            boost += 0.12
+        if exact(["fabric", "material"]):
+            boost += 0.12
+    elif category_group == "jewellery":
+        if exact(["base material", "material"]):
+            boost += 0.10
+        if exact(["gemstone", "semi precious stone type"]):
+            boost += 0.08
+        if exact(["ring size", "size"]):
+            boost += 0.06
+    elif category_group == "mobile_accessories":
+        if exact(["designed for", "compatible model", "model name"]):
+            boost += 0.14
+        if exact(["model number", "model id"]):
+            boost += 0.06
+    elif category_group == "furniture_home":
+        if exact(["material", "primary material"]):
+            boost += 0.10
+        if exact(["width"]) and exact(["height"]):
+            boost += 0.08
+
+    description_score = description_overlap_score(item_row, candidate_row)
+    boost += min(0.12, 0.22 * description_score)
+
+    return min(boost, 0.68)
+
+
 def hybrid_similarity_score(item_row: pd.Series, candidate_row: pd.Series, cosine_score: float) -> float:
+    if has_hard_mismatch(item_row, candidate_row):
+        return 0.0
+
     attribute_score = attribute_match_score(item_row, candidate_row)
     category_score = category_match_score(item_row, candidate_row)
-    return (0.60 * cosine_score) + (0.25 * attribute_score) + (0.15 * category_score)
+    description_score = description_overlap_score(item_row, candidate_row)
+    base_score = (
+        (0.15 * cosine_score)
+        + (0.50 * attribute_score)
+        + (0.20 * category_score)
+        + (0.15 * description_score)
+    )
+    boost_score = exact_match_boost_score(item_row, candidate_row)
+    return min(1.0, base_score + ((1.0 - base_score) * boost_score))
 
 
 def load_dataset(path: Path) -> pd.DataFrame:
@@ -458,13 +854,27 @@ def preprocess_dataset(df: pd.DataFrame) -> pd.DataFrame:
     )
     data["category_path"] = data["sanitized_category_parts"].apply(lambda items: " | ".join(items))
     data["leaf_category"] = data["sanitized_category_parts"].apply(infer_leaf_category)
-    data["spec_pairs"] = data["product_specifications"].apply(extract_spec_pairs)
+    data["category_group"] = data["root_category"].apply(root_category_group)
+    data["spec_pairs"] = data.apply(
+        lambda row: enrich_spec_pairs(
+            extract_spec_pairs(row["product_specifications"]),
+            row["product_name"],
+            row["root_category"],
+        ),
+        axis=1,
+    )
     data["spec_text"] = data["product_specifications"].apply(parse_specifications)
     data["attribute_signature"] = data["spec_pairs"].apply(build_attribute_signature)
+    data["name_attribute_signature"] = data.apply(
+        lambda row: build_attribute_signature(extract_name_attributes(row["product_name"], row["root_category"])),
+        axis=1,
+    )
 
     data["clean_name"] = data["product_name"].fillna("").apply(normalize_text)
     data["clean_brand"] = data["brand"].fillna("unknown").apply(normalize_text)
     data["clean_description"] = data["description"].fillna("").apply(normalize_text)
+    data["description_core"] = data["description"].apply(extract_description_core)
+    data["clean_description_core"] = data["description_core"].fillna("").apply(normalize_text)
     data["clean_category"] = data["category_path"].fillna("").apply(normalize_text)
     data["clean_leaf_category"] = data["leaf_category"].fillna("unknown").apply(normalize_text)
     data["clean_attributes"] = data["attribute_signature"].fillna("").apply(normalize_text)
@@ -473,6 +883,11 @@ def preprocess_dataset(df: pd.DataFrame) -> pd.DataFrame:
         axis=1,
     )
     data["clean_core_attributes"] = data["core_attribute_text"].fillna("").apply(normalize_text)
+    data["priority_attribute_text"] = data.apply(
+        lambda row: build_priority_attribute_text(row["root_category"], row["spec_pairs"]),
+        axis=1,
+    )
+    data["clean_priority_attributes"] = data["priority_attribute_text"].fillna("").apply(normalize_text)
     data["family_key"] = data.apply(
         lambda row: build_family_key(
             row["root_category"],
@@ -496,7 +911,7 @@ def preprocess_dataset(df: pd.DataFrame) -> pd.DataFrame:
         + " "
         + data["family_key"]
         + " "
-        data["clean_leaf_category"]
+        + data["clean_leaf_category"]
         + " "
         + data["clean_leaf_category"]
         + " "
@@ -534,13 +949,23 @@ def preprocess_dataset(df: pd.DataFrame) -> pd.DataFrame:
         + " "
         + data["clean_name"]
         + " "
+        + data["clean_priority_attributes"]
+        + " "
+        + data["clean_priority_attributes"]
+        + " "
+        + data["clean_core_attributes"]
+        + " "
         + data["clean_core_attributes"]
         + " "
         + data["clean_core_attributes"]
         + " "
         + data["clean_core_attributes"]
+        + " "
+        + data["clean_category"]
         + " "
         + data["clean_brand"]
+        + " "
+        + data["clean_description_core"]
     ).str.replace(r"\s+", " ", regex=True).str.strip()
 
     data = data[data["combined_text"].str.len() > 0].reset_index(drop=True)
@@ -553,34 +978,115 @@ def train_test_items(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     return train_df.reset_index(drop=True), test_df.reset_index(drop=True)
 
 
-def build_vectorizer() -> TfidfVectorizer:
-    return TfidfVectorizer(max_features=15000, ngram_range=(1, 2), min_df=2)
+def build_vectorizer(category_group: str = "general") -> TfidfVectorizer:
+    if category_group == "clothing":
+        return TfidfVectorizer(max_features=18000, ngram_range=(1, 3), min_df=2, sublinear_tf=True)
+    if category_group == "mobile_accessories":
+        return TfidfVectorizer(max_features=12000, ngram_range=(1, 2), min_df=2, sublinear_tf=True)
+    if category_group == "jewellery":
+        return TfidfVectorizer(max_features=10000, ngram_range=(1, 2), min_df=2, sublinear_tf=True)
+    if category_group == "furniture_home":
+        return TfidfVectorizer(max_features=12000, ngram_range=(1, 2), min_df=2, sublinear_tf=True)
+    return TfidfVectorizer(max_features=15000, ngram_range=(1, 2), min_df=2, sublinear_tf=True)
 
 
 def fit_vectorizer(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
-) -> Tuple[TfidfVectorizer, np.ndarray, np.ndarray]:
-    vectorizer = build_vectorizer()
-    train_matrix = vectorizer.fit_transform(train_df["focused_text"])
-    test_matrix = vectorizer.transform(test_df["focused_text"])
-    return vectorizer, train_matrix, test_matrix
+) -> Dict[str, Any]:
+    global_vectorizer = build_vectorizer("general")
+    global_train_matrix = global_vectorizer.fit_transform(train_df["focused_text"])
+    global_test_matrix = global_vectorizer.transform(test_df["focused_text"])
+
+    bundle: Dict[str, Any] = {
+        "global_vectorizer": global_vectorizer,
+        "global_train_matrix": global_train_matrix,
+        "global_test_matrix": global_test_matrix,
+        "group_vectorizers": {},
+        "group_train_matrices": {},
+        "group_test_matrices": {},
+        "group_train_positions": {},
+        "group_test_positions": {},
+    }
+
+    all_groups = sorted(set(train_df["category_group"].tolist()) | set(test_df["category_group"].tolist()))
+    for group in all_groups:
+        train_group_indices = train_df.index[train_df["category_group"] == group].tolist()
+        if len(train_group_indices) < TOP_K:
+            continue
+
+        test_group_indices = test_df.index[test_df["category_group"] == group].tolist()
+        group_vectorizer = build_vectorizer(group)
+        train_group_matrix = group_vectorizer.fit_transform(train_df.loc[train_group_indices, "focused_text"])
+        test_group_matrix = group_vectorizer.transform(test_df.loc[test_group_indices, "focused_text"])
+
+        bundle["group_vectorizers"][group] = group_vectorizer
+        bundle["group_train_matrices"][group] = train_group_matrix
+        bundle["group_test_matrices"][group] = test_group_matrix
+        bundle["group_train_positions"][group] = {idx: pos for pos, idx in enumerate(train_group_indices)}
+        bundle["group_test_positions"][group] = {idx: pos for pos, idx in enumerate(test_group_indices)}
+
+    return bundle
+
+
+def similarity_context_for_item(
+    item_row: pd.Series,
+    train_df: pd.DataFrame,
+    vectorizer_bundle: Dict[str, Any],
+    candidate_indices: np.ndarray | None = None,
+):
+    category_group = item_row["category_group"]
+    if category_group in vectorizer_bundle["group_vectorizers"]:
+        filtered_indices = candidate_indices
+        if candidate_indices is not None:
+            filtered_indices = np.array(
+                [idx for idx in candidate_indices if train_df.loc[idx, "category_group"] == category_group],
+                dtype=int,
+            )
+            if len(filtered_indices) == 0:
+                filtered_indices = candidate_indices
+
+        if filtered_indices is None or all(train_df.loc[idx, "category_group"] == category_group for idx in filtered_indices):
+            train_positions = vectorizer_bundle["group_train_positions"][category_group]
+            return {
+                "vectorizer": vectorizer_bundle["group_vectorizers"][category_group],
+                "train_matrix": vectorizer_bundle["group_train_matrices"][category_group],
+                "candidate_indices": filtered_indices,
+                "candidate_matrix_positions": None
+                if filtered_indices is None
+                else np.array([train_positions[idx] for idx in filtered_indices], dtype=int),
+                "mode": "group",
+            }
+
+    return {
+        "vectorizer": vectorizer_bundle["global_vectorizer"],
+        "train_matrix": vectorizer_bundle["global_train_matrix"],
+        "candidate_indices": candidate_indices,
+        "candidate_matrix_positions": candidate_indices,
+        "mode": "global",
+    }
 
 
 def recommend_from_train_item(
     item_row: pd.Series,
     train_df: pd.DataFrame,
-    train_matrix,
-    vectorizer: TfidfVectorizer,
+    vectorizer_bundle: Dict[str, Any],
     top_k: int = TOP_K,
 ) -> pd.DataFrame:
-    item_vector = vectorizer.transform([item_row["focused_text"]])
     candidate_indices = select_candidate_indices(item_row, train_df)
-    candidate_scores = cosine_similarity(item_vector, train_matrix[candidate_indices]).ravel()
-    candidate_df = train_df.iloc[candidate_indices].copy()
+    similarity_context = similarity_context_for_item(item_row, train_df, vectorizer_bundle, candidate_indices)
+    effective_indices = similarity_context["candidate_indices"]
+    item_vector = similarity_context["vectorizer"].transform([item_row["focused_text"]])
+    candidate_scores = cosine_similarity(
+        item_vector,
+        similarity_context["train_matrix"][similarity_context["candidate_matrix_positions"]],
+    ).ravel()
+    candidate_df = train_df.iloc[effective_indices].copy()
     candidate_df["cosine_score"] = candidate_scores
     candidate_df["attribute_match_score"] = candidate_df.apply(lambda row: attribute_match_score(item_row, row), axis=1)
     candidate_df["category_match_score"] = candidate_df.apply(lambda row: category_match_score(item_row, row), axis=1)
+    candidate_df["description_overlap_score"] = candidate_df.apply(lambda row: description_overlap_score(item_row, row), axis=1)
+    candidate_df["exact_match_boost_score"] = candidate_df.apply(lambda row: exact_match_boost_score(item_row, row), axis=1)
     candidate_df["hybrid_score"] = candidate_df.apply(
         lambda row: hybrid_similarity_score(item_row, row, row["cosine_score"]),
         axis=1,
@@ -606,16 +1112,15 @@ def recommend_from_train_item(
 def recommend_by_product_name(
     product_name: str,
     full_df: pd.DataFrame,
-    vectorizer: TfidfVectorizer,
     train_df: pd.DataFrame,
-    train_matrix,
+    vectorizer_bundle: Dict[str, Any],
     top_k: int = TOP_K,
 ) -> pd.DataFrame:
     matches = full_df[full_df["product_name"].str.lower() == product_name.lower()]
     if matches.empty:
         raise ValueError(f"Product name not found: {product_name}")
     item_row = matches.iloc[0]
-    return recommend_from_train_item(item_row, train_df, train_matrix, vectorizer, top_k=top_k)
+    return recommend_from_train_item(item_row, train_df, vectorizer_bundle, top_k=top_k)
 
 
 def relevant_train_items(item_row: pd.Series, train_df: pd.DataFrame) -> pd.DataFrame:
@@ -641,8 +1146,7 @@ def average_precision_at_k(relevant_flags: List[int], num_relevant: int, k: int)
 def evaluate_recommender(
     test_df: pd.DataFrame,
     train_df: pd.DataFrame,
-    test_matrix,
-    train_matrix,
+    vectorizer_bundle: Dict[str, Any],
     k: int = TOP_K,
 ) -> Tuple[pd.DataFrame, Dict[str, float]]:
     records: List[Dict[str, float]] = []
@@ -654,8 +1158,14 @@ def evaluate_recommender(
             continue
 
         candidate_indices = select_candidate_indices(item_row, train_df)
-        candidate_scores = cosine_similarity(test_matrix[test_idx], train_matrix[candidate_indices]).ravel()
-        candidate_df = train_df.iloc[candidate_indices].copy()
+        similarity_context = similarity_context_for_item(item_row, train_df, vectorizer_bundle, candidate_indices)
+        effective_indices = similarity_context["candidate_indices"]
+        item_vector = similarity_context["vectorizer"].transform([item_row["focused_text"]])
+        candidate_scores = cosine_similarity(
+            item_vector,
+            similarity_context["train_matrix"][similarity_context["candidate_matrix_positions"]],
+        ).ravel()
+        candidate_df = train_df.iloc[effective_indices].copy()
         candidate_df["cosine_score"] = candidate_scores
         candidate_df["hybrid_score"] = candidate_df.apply(
             lambda row: hybrid_similarity_score(item_row, row, row["cosine_score"]),
@@ -819,12 +1329,12 @@ def main() -> None:
     raw_df = load_dataset(DATA_PATH)
     clean_df = preprocess_dataset(raw_df)
     train_df, test_df = train_test_items(clean_df)
-    vectorizer, train_matrix, test_matrix = fit_vectorizer(train_df, test_df)
+    vectorizer_bundle = fit_vectorizer(train_df, test_df)
 
     example_item = test_df.iloc[0]
-    example_recommendations = recommend_from_train_item(example_item, train_df, train_matrix, vectorizer, top_k=TOP_K)
+    example_recommendations = recommend_from_train_item(example_item, train_df, vectorizer_bundle, top_k=TOP_K)
 
-    per_item_results, metrics = evaluate_recommender(test_df, train_df, test_matrix, train_matrix, k=TOP_K)
+    per_item_results, metrics = evaluate_recommender(test_df, train_df, vectorizer_bundle, k=TOP_K)
 
     save_tables(raw_df, clean_df, train_df, test_df, per_item_results, metrics, example_recommendations)
     plot_top_categories(clean_df)
